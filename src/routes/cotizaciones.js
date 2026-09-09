@@ -120,32 +120,54 @@ router.post('/:id/detalle', async (req, res) => {
       return res.status(404).json({ error: `Quotation ${nroCT} not found` });
     }
 
-    const result = await pool.request()
-      .input('nroCT',               sql.Int,         nroCT)
-      .input('IdProducto',          sql.Int,         IdProducto)
-      .input('SKU',                 sql.VarChar(40), SKU)
-      .input('DescripcionProducto', sql.VarChar(200),DescripcionProducto)
-      .input('UnidadMedida',        sql.VarChar(5),  UnidadMedida)
-      .input('Cantidad',            sql.Decimal(10,2),parseFloat(Cantidad))
-      .input('IdMarca',             sql.Int,         IdMarca)
-      .input('MarcaProducto',       sql.VarChar(30), MarcaProducto)
-      .query(`
-        DECLARE @nextItem INT;
-        SELECT @nextItem = ISNULL(MAX(Item), 0) + 1
-        FROM TB_COTIZA_INTERMEDIA_DET
-        WHERE Nro_CTIntermedia = @nroCT;
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
 
-        INSERT INTO TB_COTIZA_INTERMEDIA_DET
-          (Nro_CTIntermedia, Item, IdProducto, SKU,
-           DescripcionProducto, UnidadMedida, Cantidad, IdMarca, MarcaProducto)
-        OUTPUT INSERTED.Item
-        VALUES
-          (@nroCT, @nextItem, @IdProducto, @SKU,
-           @DescripcionProducto, @UnidadMedida, @Cantidad, @IdMarca, @MarcaProducto)
-      `);
+    try {
+      const result = await new sql.Request(transaction)
+        .input('nroCT',               sql.Int,          nroCT)
+        .input('IdProducto',          sql.Int,          IdProducto)
+        .input('SKU',                 sql.VarChar(40),  SKU)
+        .input('DescripcionProducto', sql.VarChar(200), DescripcionProducto)
+        .input('UnidadMedida',        sql.VarChar(5),   UnidadMedida)
+        .input('Cantidad',            sql.Decimal(10,2),parseFloat(Cantidad))
+        .input('IdMarca',             sql.Int,          IdMarca)
+        .input('MarcaProducto',       sql.VarChar(30),  MarcaProducto)
+        .query(`
+          DECLARE @lockResource VARCHAR(40) = CONCAT('DET_', CAST(@nroCT AS VARCHAR(20)));
+          DECLARE @lockResult INT;
+          EXEC @lockResult = sp_getapplock
+              @Resource    = @lockResource,
+              @LockMode    = 'Exclusive',
+              @LockOwner   = 'Transaction',
+              @LockTimeout = 10000;
+          IF @lockResult < 0
+          BEGIN
+              ROLLBACK TRANSACTION;
+              THROW 50000, 'No se pudo obtener el lock para insertar el detalle', 1;
+          END
 
-    const item = result.recordset[0].Item;
-    res.status(201).json({ Nro_CTIntermedia: nroCT, Item: item });
+          DECLARE @nextItem INT;
+          SELECT @nextItem = ISNULL(MAX(Item), 0) + 1
+          FROM TB_COTIZA_INTERMEDIA_DET
+          WHERE Nro_CTIntermedia = @nroCT;
+
+          INSERT INTO TB_COTIZA_INTERMEDIA_DET
+            (Nro_CTIntermedia, Item, IdProducto, SKU,
+             DescripcionProducto, UnidadMedida, Cantidad, IdMarca, MarcaProducto)
+          OUTPUT INSERTED.Item
+          VALUES
+            (@nroCT, @nextItem, @IdProducto, @SKU,
+             @DescripcionProducto, @UnidadMedida, @Cantidad, @IdMarca, @MarcaProducto)
+        `);
+
+      await transaction.commit();
+      const item = result.recordset[0].Item;
+      res.status(201).json({ Nro_CTIntermedia: nroCT, Item: item });
+    } catch (err) {
+      try { await transaction.rollback(); } catch (_) { /* already rolled back by T-SQL */ }
+      throw err;
+    }
   } catch (err) {
     console.error('[cotizaciones/detalle]', err);
     res.status(500).json({ error: err.message });
