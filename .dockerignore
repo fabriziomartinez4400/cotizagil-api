@@ -1,0 +1,27 @@
+# Credenciales y entorno
+.env
+.env.*
+
+# Dependencias
+node_modules/
+
+# Control de versiones
+.git/
+.gitignore
+
+# Archivos de base de datos y exportaciones
+*.BAK
+*.zip
+*.xlsx
+
+# Scripts Windows
+*.ps1
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Misceláneos
+.DS_Store
+Thumbs.db
