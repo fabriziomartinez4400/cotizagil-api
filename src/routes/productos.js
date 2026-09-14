@@ -63,6 +63,7 @@ router.get('/buscar', async (req, res) => {
       return request.query(`
         SELECT TOP (@limit)
           p.IdProducto,
+          p.IdMarca,
           p.CodigoERP,
           p.SKU,
           p.DescripcionProducto,
